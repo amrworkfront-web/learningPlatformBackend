@@ -37,11 +37,12 @@ const getMyCourses = async (req, res) => {
 };
 
 // @desc    Update lesson progress
-// @route   POST /api/students/progress
+// @route   PUT /api/students/progress/lessons/:lessonId
 // @access  Private/Student
 const updateProgress = async (req, res) => {
   try {
-    const { courseId, lessonId, completed, watchedSeconds } = req.body;
+    const { lessonId } = req.params;
+    const { courseId, completed, watchedSeconds } = req.body;
 
     const progress = await Progress.findOne({
       userId: req.user._id,
@@ -55,12 +56,17 @@ const updateProgress = async (req, res) => {
       await progress.save();
       res.json(progress);
     } else {
+      // For creation, courseId is required.
+      if (!courseId) {
+          return res.status(400).json({ message: 'Course ID is required for first time progress' });
+      }
+      
       const newProgress = await Progress.create({
         userId: req.user._id,
         courseId,
         lessonId,
-        completed,
-        watchedSeconds,
+        completed: completed || false,
+        watchedSeconds: watchedSeconds || 0,
         lastWatched: Date.now()
       });
       res.json(newProgress);
@@ -75,11 +81,34 @@ const updateProgress = async (req, res) => {
 // @access  Private/Student
 const getCourseProgress = async (req, res) => {
   try {
-    const progress = await Progress.find({
+    const { courseId } = req.params;
+    
+    // 1. Get Total Lessons count
+    const course = await Course.findById(courseId);
+    if (!course) return res.status(404).json({ message: 'Course not found' });
+    
+    const totalLessons = course.lessons.length;
+
+    // 2. Get Completed Lessons count
+    // Find all progress docs for this user & course where completed is true
+    const completedProgressDocs = await Progress.find({
       userId: req.user._id,
-      courseId: req.params.courseId
+      courseId,
+      completed: true
     });
-    res.json(progress);
+    
+    const completedCount = completedProgressDocs.length;
+
+    // 3. Calculate Percentage
+    const progressPercentage = totalLessons === 0 ? 0 : (completedCount / totalLessons) * 100;
+
+    res.json({
+        courseId,
+        totalLessons,
+        completedLessons: completedCount,
+        progressPercentage: Math.round(progressPercentage * 100) / 100, // Round to 2 decimal places
+        details: completedProgressDocs // Optional: return which lessons are completed
+    });
   } catch (error) {
     res.status(500).json({ message: error.message });
   }

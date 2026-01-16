@@ -1,5 +1,4 @@
 const User = require('../models/User');
-const Token = require('../models/Token');
 const { generateAccessToken, generateRefreshToken } = require('../utils/generateTokens');
 const jwt = require('jsonwebtoken');
 
@@ -16,10 +15,9 @@ const register = async (req, res) => {
       return res.status(400).json({ message: 'User already exists' });
     }
 
-    // Role validation (optional simple check)
+    // Role validation
     if (role && !['student', 'instructor'].includes(role)) {
-       // Only allow setting student or instructor, admin usually manual
-       // But for this project, I'll allow it or just default to student if not provided
+       // limiting role creation via public api if needed
     }
 
     const user = await User.create({
@@ -30,6 +28,28 @@ const register = async (req, res) => {
     });
 
     if (user) {
+      // Generate tokens immediately upon register or just return success?
+      // Usually users expect to be logged in. Let's issue tokens.
+      const accessToken = generateAccessToken(user._id, user.role);
+      const refreshToken = generateRefreshToken(user._id);
+
+      // Set Cookies
+      // Access Token
+      res.cookie('accessToken', accessToken, {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: 'strict',
+        maxAge: 15 * 60 * 1000 // 15 minutes
+      });
+
+      // Refresh Token
+      res.cookie('refreshToken', refreshToken, {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: 'strict',
+        maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days
+      });
+
       res.status(201).json({
         _id: user._id,
         name: user.name,
@@ -57,14 +77,18 @@ const login = async (req, res) => {
       const accessToken = generateAccessToken(user._id, user.role);
       const refreshToken = generateRefreshToken(user._id);
 
-      // Save refresh token to DB
-      await Token.create({
-        userId: user._id,
-        token: refreshToken
+      // NO Database storage for tokens (Stateless)
+
+      // Set Access Token Cookie
+      res.cookie('accessToken', accessToken, {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: 'strict',
+        maxAge: 15 * 60 * 1000 // 15 minutes
       });
 
-      // Set Refresh Token in HTTP-only cookie
-      res.cookie('jwt', refreshToken, {
+      // Set Refresh Token Cookie
+      res.cookie('refreshToken', refreshToken, {
         httpOnly: true,
         secure: process.env.NODE_ENV === 'production',
         sameSite: 'strict',
@@ -72,7 +96,7 @@ const login = async (req, res) => {
       });
 
       res.json({
-        accessToken,
+        success: true,
         user: {
           _id: user._id,
           name: user.name,
@@ -90,35 +114,47 @@ const login = async (req, res) => {
 
 // @desc    Refresh Access Token
 // @route   GET /api/auth/refresh
-// @access  Public (with Cookie)
+// @access  Public (Current implementation relies on cookie presence, not auth middleware)
 const refresh = async (req, res) => {
   try {
     const cookies = req.cookies;
     
-    if (!cookies?.jwt) return res.status(401).json({ message: 'Unauthorized, no refresh token' });
+    // Check for 'refreshToken' cookie (named explicitly)
+    if (!cookies?.refreshToken) return res.status(401).json({ message: 'Unauthorized, no refresh token' });
 
-    const refreshToken = cookies.jwt;
+    const refreshToken = cookies.refreshToken;
 
-    // Check if token exists in DB
-    const tokenDoc = await Token.findOne({ token: refreshToken });
-    if (!tokenDoc) {
-       return res.status(403).json({ message: 'Forbidden, token not found' });
-    }
-
+    // Verify JWT - Stateleless check
     jwt.verify(
       refreshToken, 
       process.env.JWT_REFRESH_SECRET, 
       async (err, decoded) => {
-        if (err || tokenDoc.userId.toString() !== decoded.userId) {
-            return res.status(403).json({ message: 'Forbidden, invalid token' });
-        }
+        if (err) return res.status(403).json({ message: 'Forbidden, invalid token' });
         
         const user = await User.findById(decoded.userId);
         if(!user) return res.status(401).json({ message: 'User not found' });
 
-        const accessToken = generateAccessToken(user._id, user.role);
+        // Rotate Tokens
+        const newAccessToken = generateAccessToken(user._id, user.role);
+        const newRefreshToken = generateRefreshToken(user._id);
 
-        res.json({ accessToken });
+        // Set New Access Token
+        res.cookie('accessToken', newAccessToken, {
+          httpOnly: true,
+          secure: process.env.NODE_ENV === 'production',
+          sameSite: 'strict',
+          maxAge: 15 * 60 * 1000 // 15 minutes
+        });
+
+        // Set New Refresh Token
+        res.cookie('refreshToken', newRefreshToken, {
+          httpOnly: true,
+          secure: process.env.NODE_ENV === 'production',
+          sameSite: 'strict',
+          maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days
+        });
+
+        res.json({ success: true, message: 'Tokens refreshed' });
       }
     );
 
@@ -132,19 +168,20 @@ const refresh = async (req, res) => {
 // @access  Public
 const logout = async (req, res) => {
   try {
-    const cookies = req.cookies;
-    if (!cookies?.jwt) return res.status(204).send(); // No content
+    // Clear both cookies
+    res.clearCookie('accessToken', { 
+        httpOnly: true, 
+        sameSite: 'strict', 
+        secure: process.env.NODE_ENV === 'production' 
+    });
+    
+    res.clearCookie('refreshToken', { 
+        httpOnly: true, 
+        sameSite: 'strict', 
+        secure: process.env.NODE_ENV === 'production' 
+    });
 
-    const refreshToken = cookies.jwt;
-
-    // Is refresh token in db?
-    const tokenDoc = await Token.findOne({ token: refreshToken });
-    if (tokenDoc) {
-       await Token.deleteOne({ token: refreshToken });
-    }
-
-    res.clearCookie('jwt', { httpOnly: true, sameSite: 'strict', secure: process.env.NODE_ENV === 'production' });
-    res.json({ message: 'Cookie cleared' });
+    res.json({ message: 'Logged out successfully' });
   } catch (error) {
      res.status(500).json({ message: error.message });
   }

@@ -9,14 +9,15 @@ const {
   getLessonNotes,
   deleteNote
 } = require('../controllers/studentController');
-const { protect } = require('../middleware/authMiddleware');
+const { protect, authorize } = require('../middleware/authMiddleware');
 
-router.use(protect); // All routes protected
+router.use(protect); 
+router.use(authorize('student')); // Enforce RBAC for all student routes
 
 router.post('/enroll/:courseId', enrollCourse);
 router.get('/my-courses', getMyCourses);
 
-router.post('/progress', updateProgress);
+router.put('/progress/lessons/:lessonId', updateProgress);
 router.get('/progress/:courseId', getCourseProgress);
 
 router.post('/notes', saveNote);
