@@ -8,7 +8,7 @@ const {
   deleteCourse,
   addLesson
 } = require('../controllers/courseController');
-const { protect, authorize } = require('../middleware/authMiddleware');
+const { protect, authorize } = require('../middlewares/authMiddleware');
 
 router.route('/')
   .get(getCourses)

@@ -9,7 +9,7 @@ const {
   getLessonNotes,
   deleteNote
 } = require('../controllers/studentController');
-const { protect, authorize } = require('../middleware/authMiddleware');
+const { protect, authorize } = require('../middlewares/authMiddleware');
 
 router.use(protect); 
 router.use(authorize('student')); // Enforce RBAC for all student routes
